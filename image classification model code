@@ -1,0 +1,403 @@
+import numpy as np
+import tensorflow as tf
+from tensorflow.keras import datasets, layers, models, callbacks
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.metrics import classification_report, confusion_matrix
+import time
+import os
+
+# Set random seeds for reproducibility
+np.random.seed(42)
+tf.random.set_seed(42)
+
+print("TensorFlow version:", tf.__version__)
+
+# 1. DATA LOADING AND EXPLORATION
+print("\nStep 1: Loading and Exploring the Dataset")
+
+# Load CIFAR-10 dataset
+(train_images, train_labels), (test_images, test_labels) = datasets.cifar10.load_data()
+
+# Normalize pixel values to be between 0 and 1
+train_images = train_images.astype('float32') / 255.0
+test_images = test_images.astype('float32') / 255.0
+
+# Convert labels from 2D to 1D array
+train_labels = train_labels.flatten()
+test_labels = test_labels.flatten()
+
+# Class names for CIFAR-10
+class_names = ['airplane', 'automobile', 'bird', 'cat', 'deer', 
+               'dog', 'frog', 'horse', 'ship', 'truck']
+
+# Display dataset information
+print(f"Training images shape: {train_images.shape}")
+print(f"Training labels shape: {train_labels.shape}")
+print(f"Test images shape: {test_images.shape}")
+print(f"Test labels shape: {test_labels.shape}")
+
+# Display class distribution
+unique, counts = np.unique(train_labels, return_counts=True)
+print("\nClass distribution in training set:")
+for class_idx, count in zip(unique, counts):
+    print(f"{class_names[class_idx]}: {count} images")
+
+# Visualize sample images
+plt.figure(figsize=(10, 10))
+for i in range(25):
+    plt.subplot(5, 5, i + 1)
+    plt.xticks([])
+    plt.yticks([])
+    plt.grid(False)
+    plt.imshow(train_images[i])
+    plt.xlabel(class_names[train_labels[i]])
+plt.suptitle('Sample Images from CIFAR-10', fontsize=16)
+plt.tight_layout()
+plt.subplots_adjust(top=0.9)
+plt.show()
+
+# 2. DATA PREPROCESSING
+print("\nStep 2: Data Preprocessing")
+
+# Create validation set from training data
+val_images = train_images[-5000:]
+val_labels = train_labels[-5000:]
+train_images = train_images[:-5000]
+train_labels = train_labels[:-5000]
+
+print(f"Updated training set size: {train_images.shape[0]} images")
+print(f"Validation set size: {val_images.shape[0]} images")
+print(f"Test set size: {test_images.shape[0]} images")
+
+# Data augmentation for training
+data_augmentation = tf.keras.Sequential([
+    layers.RandomFlip("horizontal"),
+    layers.RandomRotation(0.1),
+    layers.RandomZoom(0.1),
+    layers.RandomTranslation(height_factor=0.1, width_factor=0.1),
+])
+
+# Visualize data augmentation
+plt.figure(figsize=(10, 10))
+for i in range(9):
+    augmented_image = data_augmentation(tf.expand_dims(train_images[0], 0))
+    plt.subplot(3, 3, i + 1)
+    plt.imshow(augmented_image[0])
+    plt.axis('off')
+plt.suptitle('Augmented Images Examples', fontsize=16)
+plt.tight_layout()
+plt.subplots_adjust(top=0.9)
+plt.show()
+
+# 3. MODEL ARCHITECTURE
+print("\nStep 3: Building the CNN Model")
+
+def build_model():
+    """Build and compile the CNN model"""
+    model = models.Sequential([
+        # Data augmentation layer (only applied during training)
+        data_augmentation,
+        
+        # First convolutional block
+        layers.Conv2D(32, (3, 3), padding='same', activation='relu', input_shape=(32, 32, 3)),
+        layers.BatchNormalization(),
+        layers.Conv2D(32, (3, 3), padding='same', activation='relu'),
+        layers.BatchNormalization(),
+        layers.MaxPooling2D((2, 2)),
+        layers.Dropout(0.2),
+        
+        # Second convolutional block
+        layers.Conv2D(64, (3, 3), padding='same', activation='relu'),
+        layers.BatchNormalization(),
+        layers.Conv2D(64, (3, 3), padding='same', activation='relu'),
+        layers.BatchNormalization(),
+        layers.MaxPooling2D((2, 2)),
+        layers.Dropout(0.3),
+        
+        # Third convolutional block
+        layers.Conv2D(128, (3, 3), padding='same', activation='relu'),
+        layers.BatchNormalization(),
+        layers.Conv2D(128, (3, 3), padding='same', activation='relu'),
+        layers.BatchNormalization(),
+        layers.MaxPooling2D((2, 2)),
+        layers.Dropout(0.4),
+        
+        # Dense layers
+        layers.Flatten(),
+        layers.Dense(128, activation='relu'),
+        layers.BatchNormalization(),
+        layers.Dropout(0.5),
+        layers.Dense(10, activation='softmax')  # 10 classes for CIFAR-10
+    ])
+    
+    # Compile model
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+        loss='sparse_categorical_crossentropy',
+        metrics=['accuracy']
+    )
+    
+    return model
+
+# Build the model
+model = build_model()
+
+# Display model summary
+model.summary()
+
+# 4. MODEL TRAINING WITH CALLBACKS
+print("\nStep 4: Training the CNN Model")
+
+# Define callbacks
+callbacks_list = [
+    callbacks.EarlyStopping(
+        monitor='val_loss',
+        patience=10,
+        restore_best_weights=True
+    ),
+    callbacks.ReduceLROnPlateau(
+        monitor='val_loss',
+        factor=0.5,
+        patience=5,
+        min_lr=1e-6
+    ),
+    callbacks.ModelCheckpoint(
+        filepath='best_cnn_model.h5',
+        monitor='val_accuracy',
+        save_best_only=True
+    )
+]
+
+# Train the model
+start_time = time.time()
+
+history = model.fit(
+    train_images, train_labels,
+    epochs=50,
+    batch_size=64,
+    validation_data=(val_images, val_labels),
+    callbacks=callbacks_list,
+    verbose=1
+)
+
+training_time = time.time() - start_time
+print(f"\nTraining completed in {training_time:.2f} seconds")
+
+# 5. TRAINING VISUALIZATION
+print("\nStep 5: Visualizing Training Progress")
+
+# Plot training & validation accuracy
+plt.figure(figsize=(12, 5))
+plt.subplot(1, 2, 1)
+plt.plot(history.history['accuracy'], label='Training Accuracy')
+plt.plot(history.history['val_accuracy'], label='Validation Accuracy')
+plt.xlabel('Epoch')
+plt.ylabel('Accuracy')
+plt.title('Training and Validation Accuracy')
+plt.legend()
+
+# Plot training & validation loss
+plt.subplot(1, 2, 2)
+plt.plot(history.history['loss'], label='Training Loss')
+plt.plot(history.history['val_loss'], label='Validation Loss')
+plt.xlabel('Epoch')
+plt.ylabel('Loss')
+plt.title('Training and Validation Loss')
+plt.legend()
+
+plt.tight_layout()
+plt.show()
+
+# Load the best model if it exists
+if os.path.exists('best_cnn_model.h5'):
+    model = tf.keras.models.load_model('best_cnn_model.h5')
+    print("Loaded the best model based on validation accuracy")
+
+# 6. MODEL EVALUATION
+print("\nStep 6: Evaluating the Model on Test Data")
+
+# Evaluate the model on test data
+test_loss, test_acc = model.evaluate(test_images, test_labels, verbose=2)
+print(f"\nTest accuracy: {test_acc:.4f}")
+print(f"Test loss: {test_loss:.4f}")
+
+# Make predictions
+predictions = model.predict(test_images)
+predicted_classes = np.argmax(predictions, axis=1)
+
+# Classification report
+print("\nClassification Report:")
+report = classification_report(test_labels, predicted_classes, 
+                              target_names=class_names, digits=4)
+print(report)
+
+# Confusion matrix
+cm = confusion_matrix(test_labels, predicted_classes)
+plt.figure(figsize=(12, 10))
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
+            xticklabels=class_names, yticklabels=class_names)
+plt.xlabel('Predicted')
+plt.ylabel('True')
+plt.title('Confusion Matrix')
+plt.show()
+
+# 7. VISUALIZE PREDICTIONS
+print("\nStep 7: Visualizing Model Predictions")
+
+def plot_image(i, predictions_array, true_label, img):
+    true_label, img = true_label[i], img[i]
+    plt.grid(False)
+    plt.xticks([])
+    plt.yticks([])
+    
+    plt.imshow(img)
+    
+    predicted_label = np.argmax(predictions_array[i])
+    if predicted_label == true_label:
+        color = 'blue'
+    else:
+        color = 'red'
+        
+    plt.xlabel(f"{class_names[predicted_label]} ({100*np.max(predictions_array[i]):.2f}%)\n[True: {class_names[true_label]}]", 
+               color=color)
+
+def plot_value_array(i, predictions_array, true_label):
+    true_label = true_label[i]
+    plt.grid(False)
+    plt.xticks(range(10), class_names, rotation=45)
+    plt.yticks([])
+    thisplot = plt.bar(range(10), predictions_array[i], color="#777777")
+    plt.ylim([0, 1])
+    predicted_label = np.argmax(predictions_array[i])
+    
+    thisplot[predicted_label].set_color('red')
+    thisplot[true_label].set_color('blue')
+
+# Plot the first 15 test images with their predictions
+plt.figure(figsize=(15, 10))
+num_rows = 5
+num_cols = 3
+num_images = num_rows * num_cols
+
+for i in range(num_images):
+    plt.subplot(num_rows, 2*num_cols, 2*i+1)
+    plot_image(i, predictions, test_labels, test_images)
+    plt.subplot(num_rows, 2*num_cols, 2*i+2)
+    plot_value_array(i, predictions, test_labels)
+
+plt.tight_layout()
+plt.show()
+
+# 8. ANALYZE INCORRECT PREDICTIONS
+print("\nStep 8: Analyzing Incorrect Predictions")
+
+# Find indices of incorrect predictions
+incorrect_indices = np.where(predicted_classes != test_labels)[0]
+print(f"Number of incorrect predictions: {len(incorrect_indices)}")
+
+# Display some incorrect predictions
+plt.figure(figsize=(12, 12))
+min_display = min(16, len(incorrect_indices))
+for i in range(min_display):
+    idx = incorrect_indices[i]
+    plt.subplot(4, 4, i+1)
+    plt.imshow(test_images[idx])
+    plt.title(f"True: {class_names[test_labels[idx]]}\nPred: {class_names[predicted_classes[idx]]}")
+    plt.axis('off')
+plt.tight_layout()
+plt.show()
+
+# Calculate per-class accuracy
+class_accuracy = {}
+for i in range(10):
+    class_indices = np.where(test_labels == i)[0]
+    class_correct = np.sum(predicted_classes[class_indices] == test_labels[class_indices])
+    class_accuracy[class_names[i]] = class_correct / len(class_indices)
+
+# Visualize per-class accuracy
+plt.figure(figsize=(10, 6))
+classes = list(class_accuracy.keys())
+accuracies = list(class_accuracy.values())
+plt.bar(classes, accuracies)
+plt.xlabel('Class')
+plt.ylabel('Accuracy')
+plt.title('Per-Class Accuracy')
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+
+print("\nPer-class Accuracy:")
+for cls, acc in class_accuracy.items():
+    print(f"{cls}: {acc:.4f}")
+
+# 9. MODEL INFERENCE FUNCTION
+print("\nStep 9: Creating an Inference Function")
+
+def predict_image(image_path, model):
+    """
+    Function to predict the class of a single image
+    
+    Args:
+        image_path: Path to the image file
+        model: Trained CNN model
+    
+    Returns:
+        Dictionary containing prediction results
+    """
+    try:
+        # Load and preprocess the image
+        img = tf.keras.preprocessing.image.load_img(image_path, target_size=(32, 32))
+        img_array = tf.keras.preprocessing.image.img_to_array(img)
+        img_array = img_array / 255.0  # Normalize
+        img_array = tf.expand_dims(img_array, 0)  # Create batch
+        
+        # Make prediction
+        predictions = model.predict(img_array)
+        predicted_class = np.argmax(predictions[0])
+        confidence = float(predictions[0][predicted_class])
+        
+        # Format results
+        result = {
+            'class_name': class_names[predicted_class],
+            'class_id': int(predicted_class),
+            'confidence': confidence,
+            'all_probabilities': {class_names[i]: float(predictions[0][i]) for i in range(10)}
+        }
+        
+        return result
+    
+    except Exception as e:
+        return {'error': str(e)}
+
+# Note: To use this function with your own image, uncomment and modify:
+# result = predict_image('path/to/your/image.jpg', model)
+# print(f"Prediction: {result['class_name']} with confidence {result['confidence']:.4f}")
+
+# 10. MODEL DEPLOYMENT CODE (SIMPLE EXAMPLE)
+print("\nStep 10: Code for Model Deployment")
+
+def save_model_for_deployment():
+    """Save the model in TensorFlow SavedModel format for deployment"""
+    # Remove the data augmentation layer for inference
+    inference_model = models.Sequential(model.layers[1:])
+    inference_model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+        loss='sparse_categorical_crossentropy',
+        metrics=['accuracy']
+    )
+    
+    # Save the model
+    inference_model.save('cifar10_cnn_model', save_format='tf')
+    print("Model saved for deployment as 'cifar10_cnn_model'")
+    
+    # Create a model.metadata file with class information
+    with open('cifar10_cnn_model/class_names.txt', 'w') as f:
+        for class_name in class_names:
+            f.write(f"{class_name}\n")
+
+# Save the model for deployment
+save_model_for_deployment()
+
+# 11. CONCLUSION
+print("\nConclusion:")
